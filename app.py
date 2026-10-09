@@ -7,12 +7,13 @@ import secrets
 app = Flask(__name__)
 
 # Temporary storage for recent submissions.
-# Data resets when the server restarts.
 visits = deque(maxlen=500)
 
-# Set this environment variable to secure your dashboard.
-# Example: DASHBOARD_TOKEN="my_secret_key" python app.py
-DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "")
+# 1. Set your secret token here or in environment variables
+DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "default_secret_token")
+
+# 2. Set a secret URL path so people don't know where the dashboard is
+SECRET_URL_PATH = os.environ.get("SECRET_URL_PATH", "/admin-panel")
 
 PAGE = """<!doctype html>
 <html lang="en">
@@ -20,18 +21,20 @@ PAGE = """<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Browser Information Demo</title>
   <style>
-    body { font-family: sans-serif; padding: 20px; }
-    #status { margin-top: 10px; color: green; }
+    body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; }
+    #status { margin-top: 10px; color: green; font-weight: bold; }
+    .info-box { background: #f4f4f4; padding: 10px; border-radius: 5px; margin-top: 20px; }
   </style>
 </head>
 <body>
-  <h2>Browser Information Demo</h2>
-  <p>
-    This demo automatically submits basic browser information
-    when you open this page. It collects your browser's reported
-    platform, screen dimensions, and visit time.
-  </p>
-  <p id="status">Submitting browser information...</p>
+  <h2>Browser Info Demo</h2>
+  <p>This page collects basic info automatically.</p>
+  
+  <div class="info-box">
+    <p id="status">Submitting...</p>
+    <p><small>Platform: <span id="plat"></span></small></p>
+    <p><small>Screen: <span id="scr"></span></small></p>
+  </div>
   
   <script>
     const info = {
@@ -41,6 +44,10 @@ PAGE = """<!doctype html>
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
     };
 
+    // Update UI immediately for user feedback
+    document.getElementById('plat').textContent = info.platform;
+    document.getElementById('scr').textContent = `${info.screen_width}x${info.screen_height}`;
+
     fetch("/submit", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
@@ -48,10 +55,10 @@ PAGE = """<!doctype html>
     })
     .then(response => {
       document.getElementById("status").textContent = 
-        response.ok ? "Submission complete." : "Submission failed.";
+        response.ok ? "✅ Data sent successfully." : "❌ Submission failed.";
     })
     .catch(() => {
-      document.getElementById("status").textContent = "Unable to submit information.";
+      document.getElementById("status").textContent = "⚠️ Unable to submit.";
     });
   </script>
 </body>
@@ -65,7 +72,6 @@ def home():
 def submit():
     data = request.get_json(silent=True) or {}
     
-    # Accept only the specific fields used by this demo.
     allowed = ("platform", "screen_width", "screen_height", "timezone")
     clean = {
         key: str(data.get(key, "Unknown"))[:100]
@@ -76,18 +82,17 @@ def submit():
     visits.append(clean)
     return {"ok": True}
 
-@app.get("/dashboard")
+@app.get(SECRET_URL_PATH)
 def dashboard():
-    if not DASHBOARD_TOKEN:
-        return "Dashboard is not configured.", 503
+    # Check for the token
+    supplied_token = request.headers.get("X-Dashboard-Token", "")
     
-    supplied = request.headers.get("X-Dashboard-Token", "")
-    
-    # Secure comparison to prevent timing attacks
-    if not secrets.compare_digest(supplied, DASHBOARD_TOKEN):
-        return "Unauthorized", 401
+    if not secrets.compare_digest(supplied_token, DASHBOARD_TOKEN):
+        # Return 404 instead of 401 to make it even harder to find
+        # It looks like the page doesn't exist rather than "wrong password"
+        return "Not Found", 404
         
     return {"visits": list(visits)}
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=False) # Debug mode off for production feel
